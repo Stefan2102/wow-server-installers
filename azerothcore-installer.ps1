@@ -261,8 +261,10 @@ function Test-VisualStudioWorkload {
     $vswhere = Get-VswherePath
     if (-not $vswhere -or [string]::IsNullOrWhiteSpace($InstallPath)) { return $false }
     try {
-        $out = & $vswhere -path $InstallPath -requires Microsoft.VisualStudio.Workload.NativeDesktop -property installationPath 2>$null
-        return ($out -join '').Trim() -eq $InstallPath
+        $out = & $vswhere -latest -products * -version '[17.0,18.0)' `
+            -requires Microsoft.VisualStudio.Workload.NativeDesktop -property installationPath 2>$null
+        $paths = @($out | ForEach-Object { $_.Trim() })
+        return $paths -contains $InstallPath
     } catch { return $false }
 }
 
@@ -284,7 +286,7 @@ function Install-VisualStudio {
         }
         $argString = "modify --installPath `"$installPath`" --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --includeRecommended --passive --norestart"
         try {
-            $proc = Start-Process -FilePath $vsInstaller -ArgumentList $argString -Wait -PassThru -NoNewWindow
+            $proc = Start-Process -FilePath $vsInstaller -ArgumentList $argString -Wait -PassThru -Verb RunAs
             if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010 -or $proc.ExitCode -eq 1641) {
                 Write-Done "Visual Studio 2022 modified (workload installed)"
             } else {
