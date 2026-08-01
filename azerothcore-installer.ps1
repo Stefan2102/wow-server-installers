@@ -45,7 +45,6 @@ $ConfigEdits = @(                                                    # .conf edi
         Edits = @(
             @{ find = 'DataDir = "."'; replace = 'DataDir = "./data"' }
             @{ find = 'LogsDir = ""'; replace = 'LogsDir = "./logs"' }
-            @{ find = 'TempDir = ""'; replace = 'TempDir = "./temp"' }
             @{ find = 'MySQLExecutable = ""'; replace = 'MySQLExecutable = "{{MYSQL_EXECUTABLE}}"' }
             @{ find = 'MapUpdate.Threads = 1'; replace = 'MapUpdate.Threads = 4' }
             @{ find = 'EnablePlayerSettings = 0'; replace = 'EnablePlayerSettings = 1' }
