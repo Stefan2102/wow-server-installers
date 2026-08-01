@@ -31,6 +31,50 @@ $DependencyUrls = @{                                                 # download 
     ClientData = 'https://github.com/wowgaming/client-data/releases/download/v20.0/Data.zip'  # pre-extracted maps
 }
 
+$ConfigEdits = @(                                                    # .conf edits (exact find/replace text)
+    @{
+        File = 'authserver.conf'
+        Edits = @(
+            @{ find = 'LoginDatabaseInfo = "127.0.0.1;3306;acore;acore;acore_auth"'; replace = 'LoginDatabaseInfo = "{{LOGIN_DATABASE}}"' }
+            @{ find = 'MySQLExecutable = ""'; replace = 'MySQLExecutable = "{{MYSQL_EXECUTABLE}}"' }
+            @{ find = 'LogsDir = ""'; replace = 'LogsDir = "./logs"' }
+        )
+    },
+    @{
+        File = 'worldserver.conf'
+        Edits = @(
+            @{ find = 'DataDir = "."'; replace = 'DataDir = "./data"' }
+            @{ find = 'LogsDir = ""'; replace = 'LogsDir = "./logs"' }
+            @{ find = 'TempDir = ""'; replace = 'TempDir = "./temp"' }
+            @{ find = 'MySQLExecutable = ""'; replace = 'MySQLExecutable = "{{MYSQL_EXECUTABLE}}"' }
+            @{ find = 'MapUpdate.Threads = 1'; replace = 'MapUpdate.Threads = 4' }
+            @{ find = 'EnablePlayerSettings = 0'; replace = 'EnablePlayerSettings = 1' }
+            @{ find = 'DBC.EnforceItemAttributes = 1'; replace = 'DBC.EnforceItemAttributes = 0' }
+            @{ find = 'GameType = 0'; replace = 'GameType = 1' }
+            @{ find = 'LoginDatabaseInfo     = "127.0.0.1;3306;acore;acore;acore_auth"'; replace = 'LoginDatabaseInfo     = "{{LOGIN_DATABASE}}"' }
+            @{ find = 'WorldDatabaseInfo     = "127.0.0.1;3306;acore;acore;acore_world"'; replace = 'WorldDatabaseInfo     = "{{WORLD_DATABASE}}"' }
+            @{ find = 'CharacterDatabaseInfo = "127.0.0.1;3306;acore;acore;acore_characters"'; replace = 'CharacterDatabaseInfo = "{{CHARACTER_DATABASE}}"' }
+        )
+    },
+    @{
+        File = 'modules\playerbots.conf'
+        Optional = $true
+        Edits = @(
+            @{ find = 'PlayerbotsDatabaseInfo = "127.0.0.1;3306;acore;acore;acore_playerbots"'; replace = 'PlayerbotsDatabaseInfo = "{{PLAYERBOTS_DATABASE}}"' }
+        )
+    },
+    @{
+        File = 'dbimport.conf'
+        Edits = @(
+            @{ find = 'LoginDatabaseInfo     = "127.0.0.1;3306;acore;acore;acore_auth"'; replace = 'LoginDatabaseInfo     = "{{LOGIN_DATABASE}}"' }
+            @{ find = 'WorldDatabaseInfo     = "127.0.0.1;3306;acore;acore;acore_world"'; replace = 'WorldDatabaseInfo     = "{{WORLD_DATABASE}}"' }
+            @{ find = 'CharacterDatabaseInfo = "127.0.0.1;3306;acore;acore;acore_characters"'; replace = 'CharacterDatabaseInfo = "{{CHARACTER_DATABASE}}"' }
+            @{ find = 'MySQLExecutable = ""'; replace = 'MySQLExecutable = "{{MYSQL_EXECUTABLE}}"' }
+            @{ find = 'LogsDir = ""'; replace = 'LogsDir = "./logs"' }
+        )
+    }
+)
+
 # ==============================================================================
 # VARIABLES
 # ==============================================================================
@@ -302,35 +346,59 @@ function Wait-Enter {
     [void][Console]::ReadKey($true)
 }
 
+function Resolve-ConfigReplacement {
+    param(
+        [string]$Text,
+        [hashtable]$Tokens
+    )
+
+    foreach ($token in $Tokens.Keys) {
+        $marker = '{{' + $token + '}}'
+        $Text = $Text.Replace($marker, $Tokens[$token])
+    }
+    return $Text
+}
+
 function Update-ConfigFile {
     param(
         [string]$Path,
-        [hashtable]$Replacements
+        [object[]]$Edits,
+        [hashtable]$Tokens
     )
+
     if (-not (Test-Path -LiteralPath $Path)) {
         Write-Warn "$(Split-Path $Path -Leaf) not found at $Path"
         return
     }
-    $content = Get-Content $Path -Raw
+
+    $content = Get-Content -LiteralPath $Path -Raw
     $changed = $false
     $missed = 0
-    foreach ($key in $Replacements.Keys) {
-        if ($content -notmatch $key) {
-            $keyName = ($Replacements[$key] -split '\s*=')[0]
-            Write-Step "$keyName = not found"
+    foreach ($edit in $Edits) {
+        $find = $edit.find
+        $replace = Resolve-ConfigReplacement -Text $edit.replace -Tokens $Tokens
+        if ($content.Contains($find)) {
+            if ($find -eq $replace) {
+                Write-Step "already configured:"
+                Write-Host "     value: $replace" -ForegroundColor DarkGray
+            } else {
+                $content = $content.Replace($find, $replace)
+                Write-Step "replaced:"
+                Write-Host "     before: $find" -ForegroundColor DarkGray
+                Write-Host "     after:  $replace" -ForegroundColor DarkGray
+                $changed = $true
+            }
+        } elseif ($content.Contains($replace)) {
+            Write-Step "already configured:"
+            Write-Host "     value: $replace" -ForegroundColor DarkGray
+        } else {
+            Write-Warn "pattern not found:"
+            Write-Host "     expected: $find" -ForegroundColor DarkGray
+            Write-Host "     wanted:   $replace" -ForegroundColor DarkGray
             $missed++
-            continue
-        }
-        $oldLine = @($content -split "`n" | Where-Object { $_ -match $key -and $_ -notmatch '^\s*#' })[0]
-        $keyPrefix = $oldLine -replace '=.*', ''
-        $newValue = ($Replacements[$key] -split '=', 2)[1].Trim()
-        $newLine = "$keyPrefix= $newValue"
-        $content = $content.Replace($oldLine, $newLine)
-        if ($newLine.Trim() -ne $oldLine.Trim()) {
-            Write-Step $newLine.Trim()
-            $changed = $true
         }
     }
+
     if ($missed -gt 0) {
         [System.IO.File]::WriteAllText($Path, $content)
         Write-Done "$(Split-Path $Path -Leaf) partially patched ($missed key(s) not found)"
@@ -1248,56 +1316,29 @@ function Invoke-ConfigureConfFiles {
         return
     }
 
-$connStr = "127.0.0.1;$SqlPort;$SqlUser;$SqlPassword"
-    $connAuth = "$connStr;acore_auth"
-    $connWorld = "$connStr;acore_world"
-    $connChar = "$connStr;acore_characters"
-    $mysqlExe = "$($Paths.MysqlBin)\mysql.exe"
-
-    $authConf = Join-Path $confDir 'authserver.conf'
-    $worldConf = Join-Path $confDir 'worldserver.conf'
-
-    Write-Step "patching authserver.conf"
-    Update-ConfigFile -Path $authConf -Replacements @{
-        'LoginDatabaseInfo\s*=.*' = "LoginDatabaseInfo = `"$connAuth`""
-        'MySQLExecutable\s*=.*'   = "MySQLExecutable = `"$mysqlExe`""
-        'LogsDir\s*=\s*".*"'     = 'LogsDir = "./logs"'
+    $connStr = "127.0.0.1;$SqlPort;$SqlUser;$SqlPassword"
+    $tokens = @{
+        LOGIN_DATABASE      = "$connStr;acore_auth"
+        WORLD_DATABASE      = "$connStr;acore_world"
+        CHARACTER_DATABASE  = "$connStr;acore_characters"
+        PLAYERBOTS_DATABASE = "$connStr;acore_playerbots"
+        MYSQL_EXECUTABLE    = "$($Paths.MysqlBin)\mysql.exe"
     }
 
-    Write-Host ""
-    Write-Step "patching worldserver.conf"
-    Update-ConfigFile -Path $worldConf -Replacements @{
-        'DataDir\s*=\s*".*"'           = 'DataDir = "./data"'
-        'LogsDir\s*=\s*".*"'          = 'LogsDir = "./logs"'
-        'GameType\s*=\s*\d+'          = 'GameType = 1'
-        'LoginDatabaseInfo\s*=.*'     = "LoginDatabaseInfo = `"$connAuth`""
-        'WorldDatabaseInfo\s*=.*'     = "WorldDatabaseInfo = `"$connWorld`""
-        'CharacterDatabaseInfo\s*=.*' = "CharacterDatabaseInfo = `"$connChar`""
-        'MySQLExecutable\s*=.*'       = "MySQLExecutable = `"$mysqlExe`""
-    }
-
-    $playerbotsConf = Join-Path $confDir 'modules\playerbots.conf'
-    if (Test-Path -LiteralPath $playerbotsConf) {
-        Write-Host ""
-        Write-Step "patching playerbots.conf"
-        Update-ConfigFile -Path $playerbotsConf -Replacements @{
-            'PlayerbotsDatabaseInfo\s*=.*' = "PlayerbotsDatabaseInfo = `"127.0.0.1;$SqlPort;$SqlUser;$SqlPassword;acore_playerbots`""
+    foreach ($fileConfig in $ConfigEdits) {
+        $confPath = Join-Path $confDir $fileConfig.File
+        if ($fileConfig.Optional -and -not (Test-Path -LiteralPath $confPath)) {
+            if (Find-PlayerbotsModule -Paths $Paths) {
+                Write-Host ""
+                Write-Step "patching $(Split-Path $fileConfig.File -Leaf)"
+                Write-Warn "$(Split-Path $fileConfig.File -Leaf) not found at $confPath"
+            }
+            continue
         }
-    } elseif (Find-PlayerbotsModule -Paths $Paths) {
-        Write-Host ""
-        Write-Step "patching playerbots.conf"
-        Write-Warn "playerbots.conf not found at $playerbotsConf"
-    }
 
-    $dbimportConf = Join-Path $confDir 'dbimport.conf'
-    Write-Host ""
-    Write-Step "patching dbimport.conf"
-    Update-ConfigFile -Path $dbimportConf -Replacements @{
-        'LoginDatabaseInfo\s*=.*'     = "LoginDatabaseInfo = `"$connAuth`""
-        'WorldDatabaseInfo\s*=.*'     = "WorldDatabaseInfo = `"$connWorld`""
-        'CharacterDatabaseInfo\s*=.*' = "CharacterDatabaseInfo = `"$connChar`""
-        'MySQLExecutable\s*=.*'       = "MySQLExecutable = `"$mysqlExe`""
-        'LogsDir\s*=\s*".*"'         = 'LogsDir = "./logs"'
+        Write-Host ""
+        Write-Step "patching $($fileConfig.File)"
+        Update-ConfigFile -Path $confPath -Edits $fileConfig.Edits -Tokens $tokens
     }
 
     New-Folder -Path (Join-Path $Paths.Server 'logs')
