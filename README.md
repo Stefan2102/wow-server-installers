@@ -51,6 +51,30 @@ $ModuleRepositoryUrls = @(
 - `$CoreRepositoryUrl` — AzerothCore fork.
 - `$ModuleRepositoryUrls` — module repos cloned into `source/modules/`.
 
+### Config File Edits
+
+`$ConfigEdits` is also located in the configuration section. It controls the exact literal replacements applied by **Configure Config Files**.
+
+```powershell
+$ConfigEdits = @(
+    @{
+        File = 'worldserver.conf'
+        Edits = @(
+            @{ find = 'DataDir = "."'; replace = 'DataDir = "./data"' }
+            @{ find = 'MapUpdate.Threads = 1'; replace = 'MapUpdate.Threads = 4' }
+            @{ find = 'EnablePlayerSettings = 0'; replace = 'EnablePlayerSettings = 1' }
+        )
+    }
+)
+```
+
+- `find` must exactly match the text in the generated `.conf` file.
+- `replace` is the exact text written to the `.conf` file.
+- Add or remove entries to customize configuration values.
+- Database and MySQL path values can use the automatic tokens `{{LOGIN_DATABASE}}`, `{{WORLD_DATABASE}}`, `{{CHARACTER_DATABASE}}`, `{{PLAYERBOTS_DATABASE}}`, and `{{MYSQL_EXECUTABLE}}`.
+- Missing patterns are reported as warnings. Running Configure again reports values that are already configured.
+- **Generate .conf files** copies `.conf.dist` files to `.conf` files. **Configure Config Files** only applies the `$ConfigEdits` replacements and does not copy or delete configuration files.
+
 ### Not Configurable
 
 - MySQL host: always `127.0.0.1` — the bundled MySQL, authserver, and worldserver all run on the same machine.
@@ -66,7 +90,7 @@ Run in this order for a first-time install:
 3. **Source & Modules** — sub-menu: Clone (clones missing repos) and Update (fetches, shows commits behind, asks Y/N before pulling).
 4. **Build Server** — sub-menu: Build (incremental), Clean Build, Data (Download or Extract maps from your WoW client).
 5. **Setup Database** — sub-menu: Write `my.ini`, Initialize MySQL Data, Create Database User & Schemas.
-6. **Finalization** — sub-menu: Generate `.conf` files (copies `.conf.dist` → `.conf`), Configure Config Files (patches DataDir, GameType, DatabaseInfo, MySQLExecutable), Generate launcher `.bat` files.
+6. **Finalization** — sub-menu: Generate `.conf` files (copies `.conf.dist` → `.conf`), Configure Config Files (applies `$ConfigEdits` literal replacements), Generate launcher `.bat` files.
 
 ## Typical Flows
 
