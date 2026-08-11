@@ -16,11 +16,16 @@ $SqlPort     = 3306                                                  # MySQL TCP
 $ClientPath  = 'D:\Games\World of Warcraft 3.3.5a'                   # WoW 3.3.5a installation directory
 $BuildThreads = 0                                                    # CMake build parallelism (0 = auto)
 
-$CoreRepositoryUrl = 'https://github.com/azerothcore/azerothcore-wotlk.git'   # AzerothCore upstream repository
+$CoreRepository = @{
+    Url    = 'https://github.com/azerothcore/azerothcore-wotlk.git'
+    # Branch = '<branch-name>' # Optional: omit to use the default branch
+}
 
 $ModuleRepositoryUrls = @(                                           # Module repositories (cloned into source/modules/)
     'https://github.com/azerothcore/mod-aoe-loot.git',
     'https://github.com/azerothcore/mod-learn-spells.git'
+    # To select a branch for one module, use this form instead of a plain URL:
+    # @{ Url = '<repository-url>'; Branch = '<branch-name>' }
 )
 
 $DependencyUrls = @{                                                 # download URLs for portable toolchain
@@ -428,6 +433,107 @@ function Get-GitRepositories {
     return $repos
 }
 
+function Resolve-RepositoryDefinition {
+    param(
+        $Repository,
+        [string]$DefaultBranch = ''
+    )
+
+    if ($Repository -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($Repository)) {
+            throw 'Repository URL is empty'
+        }
+        return [pscustomobject]@{
+            Url    = $Repository.Trim()
+            Branch = $DefaultBranch
+        }
+    }
+
+    if ($Repository -is [System.Collections.IDictionary]) {
+        $url = [string]$Repository['Url']
+        if ([string]::IsNullOrWhiteSpace($url)) {
+            throw 'Repository entry is missing Url'
+        }
+        $branch = ''
+        if ($Repository.Contains('Branch') -and $null -ne $Repository['Branch']) {
+            $branch = [string]$Repository['Branch']
+        }
+        return [pscustomobject]@{
+            Url    = $url.Trim()
+            Branch = $branch.Trim()
+        }
+    }
+
+    throw "Unsupported repository entry: $Repository"
+}
+
+function Normalize-GitUrl {
+    param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return '' }
+    return (($Url.Trim().TrimEnd('/') -replace '\.git$','').ToLowerInvariant())
+}
+
+function Test-ConfiguredRepository {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [string]$ExpectedUrl
+    )
+
+    $actualUrl = (& git -C $Path remote get-url origin 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($actualUrl)) {
+        Write-Warn "$Name already exists but has no origin remote; leaving it untouched"
+        return $false
+    }
+    $actualUrl = $actualUrl.Trim()
+
+    if ((Normalize-GitUrl $actualUrl) -ne (Normalize-GitUrl $ExpectedUrl)) {
+        Write-Warn "$Name already exists with a different origin"
+        Write-Warn "  existing:   $actualUrl"
+        Write-Warn "  configured: $ExpectedUrl"
+        Write-Warn "$Name was not changed"
+        return $false
+    }
+    return $true
+}
+
+function Set-ConfiguredRepositoryBranch {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [string]$Branch
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Branch)) { return $true }
+
+    $changes = & git -C $Path status --porcelain 2>$null
+    if ($changes) {
+        Write-Warn "$Name has local changes; cannot switch to branch '$Branch'"
+        Write-Warn "Commit or stash the changes, then run Clone again"
+        return $false
+    }
+
+    Write-Step "selecting branch '$Branch' for $Name"
+    try {
+        Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('-C', $Path, 'fetch', 'origin', $Branch)
+
+        & git -C $Path show-ref --verify --quiet "refs/heads/$Branch"
+        $localBranchExists = ($LASTEXITCODE -eq 0)
+        if ($localBranchExists) {
+            Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('-C', $Path, 'switch', '--quiet', $Branch)
+        } else {
+            Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('-C', $Path, 'switch', '--quiet', '--track', '-c', $Branch, "origin/$Branch")
+        }
+
+        Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('-C', $Path, 'branch', '--set-upstream-to', "origin/$Branch", $Branch)
+        Write-Done "$Name is on branch '$Branch'"
+        return $true
+    } catch {
+        Write-Warn "could not switch $Name to branch '$Branch': $_"
+        return $false
+    }
+}
+
 function Get-VswherePath {
     @(
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe",
@@ -603,13 +709,29 @@ function Invoke-CloneAll {
         return
     }
 
+    try {
+        $core = Resolve-RepositoryDefinition -Repository $CoreRepository
+    } catch {
+        Write-Err "invalid core repository entry: $_"
+        return
+    }
     $coreGitDir = Join-Path $Paths.Source '.git'
     if (Test-Path -LiteralPath $coreGitDir) {
-        Write-Step "core already cloned, skipping"
+        if (Test-ConfiguredRepository -Path $Paths.Source -Name 'core' -ExpectedUrl $core.Url) {
+            $branchSelected = Set-ConfiguredRepositoryBranch -Path $Paths.Source -Name 'core' -Branch $core.Branch
+            if ($branchSelected -and [string]::IsNullOrWhiteSpace($core.Branch)) {
+                Write-Step "core already cloned, skipping"
+            }
+        }
     } else {
-        Write-Step "cloning core: $CoreRepositoryUrl"
+        Write-Step "cloning core: $($core.Url)"
         try {
-            Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('clone', '-q', $CoreRepositoryUrl, $Paths.Source)
+            $cloneArgs = @('clone', '-q')
+            if (-not [string]::IsNullOrWhiteSpace($core.Branch)) {
+                $cloneArgs += @('--branch', $core.Branch)
+            }
+            $cloneArgs += @($core.Url, $Paths.Source)
+            Invoke-ExternalProcess -FilePath 'git' -ArgumentList $cloneArgs
             Write-Done "core cloned to $($Paths.Source)"
         } catch {
             Write-Err "core clone failed: $_"
@@ -619,16 +741,34 @@ function Invoke-CloneAll {
     New-Folder -Path $Paths.Source
     New-Folder -Path $Paths.Modules
 
-    foreach ($url in $ModuleRepositoryUrls) {
-        $name = (Split-Path $url -Leaf) -replace '\.git$',''
+    foreach ($entry in $ModuleRepositoryUrls) {
+        try {
+            $module = Resolve-RepositoryDefinition -Repository $entry
+        } catch {
+            Write-Err "invalid module repository entry: $_"
+            continue
+        }
+        $name = (Split-Path $module.Url -Leaf) -replace '\.git$',''
         $target = Join-Path $Paths.Modules $name
         $gitDir = Join-Path $target '.git'
         if (Test-Path -LiteralPath $gitDir) {
-            Write-Step "module already cloned, skipping: $name"
+            if (Test-ConfiguredRepository -Path $target -Name $name -ExpectedUrl $module.Url) {
+                if (-not (Set-ConfiguredRepositoryBranch -Path $target -Name $name -Branch $module.Branch)) {
+                    continue
+                }
+                if ([string]::IsNullOrWhiteSpace($module.Branch)) {
+                    Write-Step "module already cloned, skipping: $name"
+                }
+            }
         } else {
             Write-Step "cloning module: $name"
             try {
-                Invoke-ExternalProcess -FilePath 'git' -ArgumentList @('clone', '-q', $url, $target)
+                $cloneArgs = @('clone', '-q')
+                if (-not [string]::IsNullOrWhiteSpace($module.Branch)) {
+                    $cloneArgs += @('--branch', $module.Branch)
+                }
+                $cloneArgs += @($module.Url, $target)
+                Invoke-ExternalProcess -FilePath 'git' -ArgumentList $cloneArgs
                 Write-Done "module cloned: $name"
             } catch {
                 Write-Err "module clone failed for ${name}: $_"

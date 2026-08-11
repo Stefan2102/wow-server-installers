@@ -35,7 +35,10 @@ $SqlPort         = 3306
 $ClientPath      = 'D:\Games\World of Warcraft 3.3.5a'
 $BuildThreads    = 0
 
-$CoreRepositoryUrl = 'https://github.com/azerothcore/azerothcore-wotlk.git'
+$CoreRepository = @{
+    Url    = 'https://github.com/azerothcore/azerothcore-wotlk.git'
+    # Branch = '<branch-name>' # Optional: omit to use the default branch
+}
 
 $ModuleRepositoryUrls = @(
     'https://github.com/azerothcore/mod-aoe-loot.git',
@@ -48,8 +51,30 @@ $ModuleRepositoryUrls = @(
 - `$SqlPort` — TCP port for bundled MySQL.
 - `$ClientPath` — WoW 3.3.5a client folder (map extraction only).
 - `$BuildThreads` — CMake parallelism. `0` = auto (all cores). Set `4` or `8` if compile runs out of memory.
-- `$CoreRepositoryUrl` — AzerothCore fork.
-- `$ModuleRepositoryUrls` — module repos cloned into `source/modules/`.
+- `$CoreRepository` — AzerothCore repository URL and optional branch. Omit `Branch` to use the repository's default branch.
+- `$ModuleRepositoryUrls` — module repos cloned into `source/modules/`. A plain URL uses that repository's default branch.
+
+To use a different branch for a module, replace its plain URL with a `Url`/`Branch` entry:
+
+```powershell
+$ModuleRepositoryUrls = @(
+    @{
+        Url    = '<repository-url>'
+        Branch = '<branch-name>'
+    }
+)
+```
+
+The `Branch` value can be any branch name. If `Branch` is omitted or empty, the repository default is used.
+
+The core repository uses the same format:
+
+```powershell
+$CoreRepository = @{
+    Url    = 'https://github.com/azerothcore/azerothcore-wotlk.git'
+    Branch = '<branch-name>'
+}
+```
 
 ### Config File Edits
 
@@ -135,10 +160,14 @@ Extraction takes 30–60 minutes. Requires all four extractor executables (compi
 
 ## Branch Behavior
 
-- Clone uses each repo's default branch.
-- To use a specific branch: `cd source/<repo>` and run `git checkout <branch>` manually.
-- Update always respects the **currently checked-out branch** — never switches or pulls from a different branch.
-- Repos with no upstream tracking are skipped with a warning.
+- A plain repository URL uses that repository's default branch.
+- Set `$CoreRepository.Branch` to select a branch for the core repository.
+- For modules, use a `@{ Url = '...'; Branch = '...' }` entry when a module needs a specific branch.
+- Running **Clone** again switches an existing repository to the configured branch when its origin matches and its working tree is clean.
+- If an existing folder is a different repository, or has local changes, the installer leaves it untouched and reports a warning.
+- **Update** respects the currently checked-out branch and its configured upstream; it never silently switches branches.
+- After changing a configured branch, run **Source & Modules → Clone** once; subsequent **Update** runs follow that branch.
+- Repositories with no upstream tracking are skipped with a warning.
 
 ## Starting the Server
 
