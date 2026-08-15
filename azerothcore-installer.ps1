@@ -29,10 +29,10 @@ $ModuleRepositoryUrls = @(                                           # Module re
 )
 
 $DependencyUrls = @{                                                 # download URLs for portable toolchain
-    CMake      = 'https://github.com/Stefan2102/build-tools/releases/download/cmake_4.4.0/cmake-4.4.0-windows-x86_64.7z'
-    Boost      = 'https://github.com/Stefan2102/build-tools/releases/download/boost_1.91.0/boost_1_91_0.7z'
-    OpenSSL    = 'https://github.com/Stefan2102/build-tools/releases/download/openssl_v4.0.1/openssl.7z'
-    MySQL      = 'https://github.com/Stefan2102/build-tools/releases/download/mysql_8.4.8/mysql-8.4.8-winx64.7z'
+    CMake      = 'https://github.com/Stefan2102/build-tools/releases/download/cmake/cmake-4.4.0-windows-x86_64.7z'
+    Boost      = 'https://github.com/Stefan2102/build-tools/releases/download/boost/boost_1_91_0-msvc-14.3-64.7z'
+    OpenSSL    = 'https://github.com/Stefan2102/build-tools/releases/download/openssl/openssl_4.0.1.7z'
+    MySQL      = 'https://github.com/Stefan2102/build-tools/releases/download/mysql/mysql-8.4.8-winx64.7z'
     ClientData = 'https://github.com/wowgaming/client-data/releases/download/v20.0/Data.zip'  # pre-extracted maps
 }
 
